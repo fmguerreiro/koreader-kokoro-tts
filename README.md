@@ -1,3 +1,5 @@
+<p align="center"><img src="icon.webp" alt="KOReader Piper text-to-speech icon" width="160"></p>
+
 # KOReader Piper text-to-speech
 
 Read the visible page in KOReader through a self-hosted [Piper](https://github.com/OHF-Voice/piper1-gpl) server.
