@@ -21,7 +21,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
 private const val TAG = "KOReaderTtsBridge"
-private const val MAX_CHUNK_LENGTH = 500
+private const val MAX_CHUNK_LENGTH = 150
 private const val CHANNEL_ID = "koreader-tts-playback"
 private const val NOTIFICATION_ID = 1
 
