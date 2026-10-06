@@ -1,8 +1,11 @@
-<p align="center"><img src="icon.webp" alt="KOReader Piper text-to-speech icon" width="160"></p>
-
-# KOReader Piper text-to-speech
-
-Read the visible page in KOReader through a self-hosted [Piper](https://github.com/OHF-Voice/piper1-gpl) server.
+<div align="center">
+  <a href="https://github.com/fmguerreiro/koreader-piper-tts">
+    <img src="icon.webp" alt="KOReader Piper text-to-speech" width="96" height="96" />
+  </a>
+  <h1>KOReader Piper text-to-speech</h1>
+  <p><em>Read KOReader's visible page through a self-hosted Piper server.</em></p>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4c1.svg" alt="MIT License" /></a>
+</div>
 
 ## How it works
 
