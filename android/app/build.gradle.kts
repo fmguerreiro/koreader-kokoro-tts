@@ -3,20 +3,20 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val piperEndpoint = providers.environmentVariable("PIPER_ENDPOINT").orNull
-    ?: throw GradleException("Set PIPER_ENDPOINT to the Piper server URL")
+val kokoroEndpoint = providers.environmentVariable("KOKORO_ENDPOINT").orNull
+    ?: throw GradleException("Set KOKORO_ENDPOINT to the Kokoro server URL")
 
 android {
-    namespace = "io.github.fmguerreiro.koreaderpiper"
+    namespace = "io.github.fmguerreiro.koreaderkokoro"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.github.fmguerreiro.koreaderpiper"
+        applicationId = "io.github.fmguerreiro.koreaderkokoro"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
-        buildConfigField("String", "PIPER_ENDPOINT", "\"$piperEndpoint\"")
+        buildConfigField("String", "KOKORO_ENDPOINT", "\"$kokoroEndpoint\"")
     }
 
     buildFeatures {

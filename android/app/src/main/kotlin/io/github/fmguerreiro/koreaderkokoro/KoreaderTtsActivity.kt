@@ -1,4 +1,4 @@
-package io.github.fmguerreiro.koreaderpiper
+package io.github.fmguerreiro.koreaderkokoro
 
 import android.app.Activity
 import android.content.Intent

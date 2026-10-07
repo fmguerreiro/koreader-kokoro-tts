@@ -5,4 +5,4 @@
 local.properties
 **/build/
 server/.venv/
-server/models/
+__pycache__/

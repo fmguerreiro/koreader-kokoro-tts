@@ -84,14 +84,14 @@ function TtsBridge:speakCurrentPage()
     else
         UIManager:show(InfoMessage:new{
             icon = "notice-warning",
-            text = _("Could not reach the Piper text-to-speech companion app."),
+            text = _("Could not reach the Kokoro text-to-speech companion app."),
         })
     end
 end
 
 function TtsBridge:addToMainMenu(menu_items)
     menu_items.ttsbridge = {
-        text = _("Piper text-to-speech"),
+        text = _("Kokoro text-to-speech"),
         sorting_hint = "more_tools",
         sub_item_table = {
             {

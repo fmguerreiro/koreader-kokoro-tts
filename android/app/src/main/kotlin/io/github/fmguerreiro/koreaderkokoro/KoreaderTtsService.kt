@@ -1,4 +1,4 @@
-package io.github.fmguerreiro.koreaderpiper
+package io.github.fmguerreiro.koreaderkokoro
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -21,7 +21,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
 private const val TAG = "KOReaderTtsBridge"
-private const val MAX_CHUNK_LENGTH = 150
+private const val MAX_CHUNK_LENGTH = 300
 private const val CHANNEL_ID = "koreader-tts-playback"
 private const val NOTIFICATION_ID = 1
 
@@ -75,7 +75,7 @@ class KoreaderTtsService : Service() {
     private fun speak(text: String, languageTag: String) {
         val voice = voiceFor(languageTag)
         if (voice == null) {
-            Log.e(TAG, "Unsupported Piper language: $languageTag")
+            Log.e(TAG, "Unsupported Kokoro language: $languageTag")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
@@ -89,7 +89,7 @@ class KoreaderTtsService : Service() {
             for (chunk in text.chunkForSpeech()) {
                 if (!isCurrent(requestGeneration)) return@submit
                 val audioFile = synthesize(
-                    BuildConfig.PIPER_ENDPOINT,
+                    BuildConfig.KOKORO_ENDPOINT,
                     voice,
                     chunk,
                     requestGeneration
@@ -133,13 +133,13 @@ class KoreaderTtsService : Service() {
             }
         } catch (error: Exception) {
             output.delete()
-            if (isCurrent(requestGeneration)) Log.e(TAG, "Piper request failed", error)
+            if (isCurrent(requestGeneration)) Log.e(TAG, "Kokoro request failed", error)
             return null
         }
 
         return try {
             if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-                Log.e(TAG, "Piper returned HTTP ${connection.responseCode}")
+                Log.e(TAG, "Kokoro returned HTTP ${connection.responseCode}")
                 output.delete()
                 null
             } else {
@@ -153,7 +153,7 @@ class KoreaderTtsService : Service() {
             }
         } catch (error: Exception) {
             output.delete()
-            if (isCurrent(requestGeneration)) Log.e(TAG, "Piper response failed", error)
+            if (isCurrent(requestGeneration)) Log.e(TAG, "Kokoro response failed", error)
             null
         } finally {
             connection.disconnect()
@@ -186,7 +186,7 @@ class KoreaderTtsService : Service() {
             playNext(requestGeneration)
         }
         nextPlayer.setOnErrorListener { _, what, extra ->
-            Log.e(TAG, "Piper playback failed: $what/$extra")
+            Log.e(TAG, "Kokoro playback failed: $what/$extra")
             releasePlayer(nextPlayer, audioFile)
             playNext(requestGeneration)
             true
@@ -197,7 +197,7 @@ class KoreaderTtsService : Service() {
             nextPlayer.start()
         } catch (error: Exception) {
             releasePlayer(nextPlayer, audioFile)
-            Log.e(TAG, "Piper playback setup failed", error)
+            Log.e(TAG, "Kokoro playback setup failed", error)
             playNext(requestGeneration)
         }
     }
@@ -220,7 +220,7 @@ class KoreaderTtsService : Service() {
     @Synchronized
     private fun finishSpeech(requestGeneration: Long) {
         if (requestGeneration != generation || !synthesisComplete || player != null || audioFiles.isNotEmpty()) return
-        Log.i(TAG, "Completed Piper speech")
+        Log.i(TAG, "Completed Kokoro speech")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -258,19 +258,19 @@ class KoreaderTtsService : Service() {
     private fun voiceFor(languageTag: String): String? = when (
         Locale.forLanguageTag(languageTag).language.lowercase(Locale.ROOT)
     ) {
-        "en" -> "en_US-lessac-medium"
-        "fr" -> "fr_FR-siwis-medium"
-        "ja" -> "ja_JP-hi_fi_captain-medium"
+        "en" -> "af_heart"
+        "fr" -> "ff_siwis"
+        "ja" -> "jf_alpha"
         else -> null
     }
 
     companion object {
-        const val ACTION_SPEAK = "io.github.fmguerreiro.koreaderpiper.SPEAK"
-        const val ACTION_STOP = "io.github.fmguerreiro.koreaderpiper.STOP"
+        const val ACTION_SPEAK = "io.github.fmguerreiro.koreaderkokoro.SPEAK"
+        const val ACTION_STOP = "io.github.fmguerreiro.koreaderkokoro.STOP"
         const val EXTRA_TEXT = "text"
         const val EXTRA_LANGUAGE = "language"
         private const val CONNECT_TIMEOUT_MILLIS = 10_000
-        private const val READ_TIMEOUT_MILLIS = 60_000
+        private const val READ_TIMEOUT_MILLIS = 120_000
     }
 }
 

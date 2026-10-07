@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "koreader-piper-tts"
+rootProject.name = "koreader-kokoro-tts"
 include(":app")
