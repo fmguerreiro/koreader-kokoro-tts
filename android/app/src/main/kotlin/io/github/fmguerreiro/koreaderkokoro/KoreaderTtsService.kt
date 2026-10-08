@@ -13,15 +13,14 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.util.ArrayDeque
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
 private const val TAG = "KOReaderTtsBridge"
-private const val MAX_CHUNK_LENGTH = 300
 private const val CHANNEL_ID = "koreader-tts-playback"
 private const val NOTIFICATION_ID = 1
 
@@ -30,8 +29,6 @@ class KoreaderTtsService : Service() {
     private var synthesis: Future<*>? = null
     private var player: MediaPlayer? = null
     private var playingFile: File? = null
-    private val audioFiles = ArrayDeque<File>()
-    private var synthesisComplete = true
     private var generation = 0L
 
     override fun onCreate() {
@@ -45,12 +42,19 @@ class KoreaderTtsService : Service() {
         when (intent?.action) {
             ACTION_SPEAK -> {
                 val text = intent.getStringExtra(EXTRA_TEXT)?.trim()
-                if (text.isNullOrEmpty()) {
-                    Log.w(TAG, "Ignored empty speech request")
+                val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
+                val callbackPort = intent.getIntExtra(EXTRA_CALLBACK_PORT, 0)
+                if (text.isNullOrEmpty() || requestId.isNullOrEmpty() || callbackPort !in 1..65535) {
+                    Log.w(TAG, "Ignored invalid speech request")
                     stopSelf(startId)
                 } else {
                     startForeground(NOTIFICATION_ID, playbackNotification())
-                    speak(text, intent.getStringExtra(EXTRA_LANGUAGE) ?: Locale.US.toLanguageTag())
+                    speak(
+                        text,
+                        intent.getStringExtra(EXTRA_LANGUAGE) ?: Locale.US.toLanguageTag(),
+                        requestId,
+                        callbackPort
+                    )
                 }
             }
 
@@ -72,44 +76,40 @@ class KoreaderTtsService : Service() {
     }
 
     @Synchronized
-    private fun speak(text: String, languageTag: String) {
+    private fun speak(text: String, languageTag: String, requestId: String, callbackPort: Int) {
         val voice = voiceFor(languageTag)
-        if (voice == null) {
-            Log.e(TAG, "Unsupported Kokoro language: $languageTag")
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
-        }
-
         generation++
         stopLocked()
-        synthesisComplete = false
         val requestGeneration = generation
         synthesis = executor.submit {
-            for (chunk in text.chunkForSpeech()) {
-                if (!isCurrent(requestGeneration)) return@submit
-                val audioFile = synthesize(
-                    BuildConfig.KOKORO_ENDPOINT,
-                    voice,
-                    chunk,
-                    requestGeneration
-                ) ?: break
-                synchronized(this) {
-                    if (requestGeneration != generation) {
-                        audioFile.delete()
-                        return@submit
-                    }
-                    audioFiles.addLast(audioFile)
+            if (voice == null) {
+                Log.e(TAG, "Unsupported Kokoro language: $languageTag")
+                sendCallback(callbackPort, requestId, "error")
+                if (isCurrent(requestGeneration)) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
                 }
-                playNext(requestGeneration)
+                return@submit
             }
+            val audioFile = synthesize(BuildConfig.KOKORO_ENDPOINT, voice, text, requestGeneration)
+            if (audioFile == null) {
+                if (isCurrent(requestGeneration)) {
+                    sendCallback(callbackPort, requestId, "error")
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+                return@submit
+            }
+            if (!isCurrent(requestGeneration)) {
+                audioFile.delete()
+                return@submit
+            }
+
+            sendCallback(callbackPort, requestId, "ready")
+            play(audioFile, requestGeneration, requestId, callbackPort)
             synchronized(this) {
-                if (requestGeneration == generation) {
-                    synthesis = null
-                    synthesisComplete = true
-                }
+                if (requestGeneration == generation) synthesis = null
             }
-            playNext(requestGeneration)
         }
     }
 
@@ -160,21 +160,22 @@ class KoreaderTtsService : Service() {
         }
     }
 
-    private fun playNext(requestGeneration: Long) {
-        val next = synchronized(this) {
-            if (requestGeneration != generation || player != null) return
-            if (audioFiles.isEmpty()) {
-                if (synthesisComplete) finishSpeech(requestGeneration)
+    private fun play(
+        audioFile: File,
+        requestGeneration: Long,
+        requestId: String,
+        callbackPort: Int
+    ) {
+        val nextPlayer = synchronized(this) {
+            if (requestGeneration != generation) {
+                audioFile.delete()
                 return
             }
-
-            val audioFile = audioFiles.removeFirst()
-            val nextPlayer = MediaPlayer()
-            player = nextPlayer
-            playingFile = audioFile
-            nextPlayer to audioFile
+            MediaPlayer().also {
+                player = it
+                playingFile = audioFile
+            }
         }
-        val (nextPlayer, audioFile) = next
         nextPlayer.setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -183,12 +184,12 @@ class KoreaderTtsService : Service() {
         )
         nextPlayer.setOnCompletionListener {
             releasePlayer(nextPlayer, audioFile)
-            playNext(requestGeneration)
+            completeSpeech(requestGeneration, requestId, callbackPort)
         }
         nextPlayer.setOnErrorListener { _, what, extra ->
             Log.e(TAG, "Kokoro playback failed: $what/$extra")
             releasePlayer(nextPlayer, audioFile)
-            playNext(requestGeneration)
+            failPlayback(requestGeneration, requestId, callbackPort)
             true
         }
         try {
@@ -198,7 +199,50 @@ class KoreaderTtsService : Service() {
         } catch (error: Exception) {
             releasePlayer(nextPlayer, audioFile)
             Log.e(TAG, "Kokoro playback setup failed", error)
-            playNext(requestGeneration)
+            failPlayback(requestGeneration, requestId, callbackPort)
+        }
+    }
+
+    private fun completeSpeech(requestGeneration: Long, requestId: String, callbackPort: Int) {
+        executor.submit {
+            if (!isCurrent(requestGeneration)) return@submit
+            sendCallback(callbackPort, requestId, "done")
+            if (isCurrent(requestGeneration)) {
+                Log.i(TAG, "Completed Kokoro speech")
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }
+    }
+
+    private fun failPlayback(requestGeneration: Long, requestId: String, callbackPort: Int) {
+        executor.submit {
+            if (!isCurrent(requestGeneration)) return@submit
+            sendCallback(callbackPort, requestId, "error")
+            if (isCurrent(requestGeneration)) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }
+    }
+
+    private fun sendCallback(callbackPort: Int, requestId: String, event: String) {
+        val encodedRequestId = URLEncoder.encode(requestId, StandardCharsets.UTF_8.name())
+        val connection = try {
+            URL("http://127.0.0.1:$callbackPort/?request_id=$encodedRequestId&event=$event")
+                .openConnection() as HttpURLConnection
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not create KOReader callback", error)
+            return
+        }
+        try {
+            connection.connectTimeout = CALLBACK_TIMEOUT_MILLIS
+            connection.readTimeout = CALLBACK_TIMEOUT_MILLIS
+            connection.responseCode
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not notify KOReader: $event", error)
+        } finally {
+            connection.disconnect()
         }
     }
 
@@ -217,14 +261,6 @@ class KoreaderTtsService : Service() {
     private fun isCurrent(requestGeneration: Long): Boolean =
         requestGeneration == generation && !Thread.currentThread().isInterrupted
 
-    @Synchronized
-    private fun finishSpeech(requestGeneration: Long) {
-        if (requestGeneration != generation || !synthesisComplete || player != null || audioFiles.isNotEmpty()) return
-        Log.i(TAG, "Completed Kokoro speech")
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
-    }
-
     private fun stopSpeech() {
         synchronized(this) {
             generation++
@@ -238,19 +274,16 @@ class KoreaderTtsService : Service() {
     private fun stopLocked() {
         synthesis?.cancel(true)
         synthesis = null
-        synthesisComplete = true
         player?.release()
         player = null
         playingFile?.delete()
         playingFile = null
-        audioFiles.forEach(File::delete)
-        audioFiles.clear()
     }
 
     private fun playbackNotification(): Notification =
         Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText("Reading current page")
+            .setContentText("Narrating with Kokoro")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
@@ -265,32 +298,14 @@ class KoreaderTtsService : Service() {
     }
 
     companion object {
-        const val ACTION_SPEAK = "io.github.fmguerreiro.koreaderkokoro.SPEAK"
-        const val ACTION_STOP = "io.github.fmguerreiro.koreaderkokoro.STOP"
+        const val ACTION_SPEAK = "dev.fmguerreiro.koreader.tts.SPEAK"
+        const val ACTION_STOP = "dev.fmguerreiro.koreader.tts.STOP"
         const val EXTRA_TEXT = "text"
         const val EXTRA_LANGUAGE = "language"
+        const val EXTRA_REQUEST_ID = "request_id"
+        const val EXTRA_CALLBACK_PORT = "callback_port"
         private const val CONNECT_TIMEOUT_MILLIS = 10_000
         private const val READ_TIMEOUT_MILLIS = 120_000
+        private const val CALLBACK_TIMEOUT_MILLIS = 2_000
     }
-}
-
-private fun String.chunkForSpeech(): List<String> {
-    if (length <= MAX_CHUNK_LENGTH) return listOf(this)
-
-    val chunks = mutableListOf<String>()
-    var start = 0
-    while (start < length) {
-        var end = minOf(start + MAX_CHUNK_LENGTH, length)
-        if (end < length) {
-            while (end > start && !this[end - 1].isWhitespace()) {
-                end--
-            }
-            if (end == start) end = minOf(start + MAX_CHUNK_LENGTH, length)
-        }
-        if (end < length && this[end - 1].isHighSurrogate() && this[end].isLowSurrogate()) end--
-        chunks += substring(start, end)
-        start = end
-        while (start < length && this[start].isWhitespace()) start++
-    }
-    return chunks
 }
