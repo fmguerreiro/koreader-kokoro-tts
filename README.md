@@ -11,8 +11,8 @@
 
 This repository contains three components:
 
-1. `koreader/ttsbridge.koplugin` extracts the current page text and opens a `koreader-tts://speak` URI. It opens `koreader-tts://stop` when playback should stop.
-2. `android` handles those URIs, splits long text, requests WAV audio from Kokoro, and plays the results in order.
+1. `koreader/ttsbridge.koplugin` sends the visible page to Android, then advances page by page until narration is stopped or the book ends.
+2. `android` makes one Kokoro synthesis request per page, plays the returned WAV audio, and shows playback status in an Android notification. The client does not add arbitrary chunk boundaries that create pauses.
 3. `server` runs Kokoro-82M behind the same small `/voices` and `/synthesize` HTTP interface.
 
 The Android app maps English, French, and Japanese book language tags to Kokoro's `af_heart`, `ff_siwis`, and `jf_alpha` voices. Kokoro produces substantially more natural speech than the former Piper backend, while remaining local and self-hosted.
@@ -60,9 +60,9 @@ Copy `koreader/ttsbridge.koplugin` into the `plugins` directory in KOReader's da
 ## Use it
 
 1. Open a book in KOReader.
-2. Open **More tools**, then **Kokoro text-to-speech**.
-3. Select **Speak current page**.
-4. Select **Stop speaking** to stop synthesis and playback.
+2. Open **More tools**, then **Android text-to-speech**.
+3. Select **Start continuous narration**.
+4. Select **Stop narration** to stop synthesis and playback.
 
 The plugin uses the book language metadata when present and KOReader's text language fallback otherwise. Unsupported languages stop without playback and appear in Android logs.
 
