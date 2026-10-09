@@ -1,5 +1,7 @@
 local Device = require("device")
+local ButtonDialog = require("ui/widget/buttondialog")
 local Event = require("ui/event")
+local Geom = require("ui/geometry")
 local InfoMessage = require("ui/widget/infomessage")
 local Screen = Device.screen
 local UIManager = require("ui/uimanager")
@@ -16,6 +18,7 @@ local TtsBridge = WidgetContainer:extend{
     name = "ttsbridge",
     is_doc_only = true,
     narrating = false,
+    paused = false,
     request_counter = 0,
 }
 
@@ -37,6 +40,128 @@ end
 
 function TtsBridge:init()
     self.ui.menu:registerToMainMenu(self)
+end
+
+function TtsBridge:registerPlaybackTap()
+    if self.playback_touch_zones then
+        return
+    end
+    local menu_zone = G_defaults:readSetting("DTAP_ZONE_MENU")
+    local footer_zone = G_defaults:readSetting("DTAP_ZONE_MINIBAR")
+    local handler = function()
+        self:showPlaybackController()
+        return true
+    end
+    self.playback_touch_zones = {
+        {
+            id = "ttsbridge_playback_top_tap",
+            ges = "tap",
+            screen_zone = {
+                ratio_x = menu_zone.x,
+                ratio_y = menu_zone.y,
+                ratio_w = menu_zone.w,
+                ratio_h = menu_zone.h,
+            },
+            overrides = {
+                "readermenu_tap",
+                "readermenu_ext_tap",
+            },
+            handler = handler,
+        },
+        {
+            id = "ttsbridge_playback_bottom_tap",
+            ges = "tap",
+            screen_zone = {
+                ratio_x = footer_zone.x,
+                ratio_y = footer_zone.y,
+                ratio_w = footer_zone.w,
+                ratio_h = footer_zone.h,
+            },
+            overrides = {
+                "readerfooter_tap",
+                "readerconfigmenu_tap",
+                "readerconfigmenu_ext_tap",
+                "tap_forward",
+                "tap_backward",
+            },
+            handler = handler,
+        },
+    }
+    self.ui:registerTouchZones(self.playback_touch_zones)
+end
+
+function TtsBridge:unregisterPlaybackTap()
+    if not self.playback_touch_zones then
+        return
+    end
+    self.ui:unRegisterTouchZones(self.playback_touch_zones)
+    self.playback_touch_zones = nil
+end
+
+function TtsBridge:showPlaybackController()
+    if not self.narrating or self.playback_controller then
+        return
+    end
+    local controller
+    controller = ButtonDialog:new{
+        anchor = Geom:new{
+            x = 0,
+            y = Screen:getHeight(),
+        },
+        width = Screen:getWidth(),
+        buttons = {
+            {
+                {
+                    id = "play_pause",
+                    text = self.paused and _("Resume") or _("Pause"),
+                    callback = function()
+                        self:setPaused(not self.paused)
+                    end,
+                },
+                {
+                    text = _("Stop"),
+                    callback = function()
+                        self:stopNarration(true)
+                    end,
+                },
+            },
+        },
+        tap_close_callback = function()
+            if self.playback_controller == controller then
+                self.playback_controller = nil
+            end
+        end,
+    }
+    self.playback_controller = controller
+    UIManager:show(controller)
+end
+
+function TtsBridge:updatePlaybackController()
+    if not self.playback_controller then
+        return
+    end
+    local button = self.playback_controller:getButtonById("play_pause")
+    button:setText(self.paused and _("Resume") or _("Pause"), button.width)
+    button:refresh()
+end
+
+function TtsBridge:setPaused(paused)
+    if not self.narrating or self.paused == paused then
+        return
+    end
+    if self:openBridge(paused and "pause" or "resume") then
+        self.paused = paused
+        self:updatePlaybackController()
+        if not paused and self.advance_pending then
+            self.advance_pending = nil
+            self:speakCurrentPage()
+        end
+    else
+        UIManager:show(InfoMessage:new{
+            icon = "notice-warning",
+            text = _("Could not reach the Android text-to-speech bridge."),
+        })
+    end
 end
 
 function TtsBridge:getCurrentPageText()
@@ -180,7 +305,11 @@ function TtsBridge:advanceNarration()
     self.advance_task = function()
         self.advance_task = nil
         if self.narrating then
-            self:speakCurrentPage()
+            if self.paused then
+                self.advance_pending = true
+            else
+                self:speakCurrentPage()
+            end
         end
     end
     UIManager:scheduleIn(PAGE_TURN_DELAY_SECONDS, self.advance_task)
@@ -199,11 +328,14 @@ function TtsBridge:startNarration()
         return
     end
     self.narrating = true
+    self.paused = false
+    self:registerPlaybackTap()
+    self.advance_pending = nil
     self.last_text = nil
     self:speakCurrentPage()
     if self.narrating then
         UIManager:show(InfoMessage:new{
-            text = _("Narration started. Android shows playback status."),
+            text = _("Narration started. Tap the page for playback controls."),
             timeout = 3,
         })
     end
@@ -228,9 +360,16 @@ end
 function TtsBridge:stopNarration(show_message)
     local was_narrating = self.narrating
     self.narrating = false
+    self.paused = false
+    self.advance_pending = nil
     self.request_id = nil
     self.last_text = nil
     self:closeCallbackListener()
+    if self.playback_controller then
+        UIManager:close(self.playback_controller)
+        self.playback_controller = nil
+    end
+    self:unregisterPlaybackTap()
     if was_narrating then
         self:openBridge("stop")
     end
@@ -247,19 +386,15 @@ function TtsBridge:onCloseDocument()
 end
 
 function TtsBridge:addToMainMenu(menu_items)
-    menu_items.ttsbridge = {
-        text = _("Android text-to-speech"),
-        sorting_hint = "more_tools",
-        sub_item_table = {
-            {
-                text = _("Start continuous narration"),
-                callback = function() self:startNarration() end,
-            },
-            {
-                text = _("Stop narration"),
-                callback = function() self:stopNarration(true) end,
-            },
-        },
+    menu_items.ttsbridge_read_aloud = {
+        text = _("Read aloud"),
+        sorting_hint = "navi",
+        enabled_func = function()
+            return not self.narrating
+        end,
+        callback = function()
+            self:startNarration()
+        end,
     }
 end
 
