@@ -60,9 +60,9 @@ Copy `koreader/ttsbridge.koplugin` into the `plugins` directory in KOReader's da
 ## Use it
 
 1. Open a book in KOReader.
-2. Open **More tools**, then **Android text-to-speech**.
-3. Select **Start continuous narration**.
-4. Select **Stop narration** to stop synthesis and playback.
+2. Open the navigation tab, then select **Read aloud**.
+3. Tap the top or bottom edge of the page to open the playback controls.
+4. Select **Pause**, **Resume**, or **Stop**.
 
 The plugin uses the book language metadata when present and KOReader's text language fallback otherwise. Unsupported languages stop without playback and appear in Android logs.
 

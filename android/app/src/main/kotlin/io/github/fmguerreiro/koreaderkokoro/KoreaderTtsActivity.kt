@@ -27,10 +27,15 @@ class KoreaderTtsActivity : Activity() {
 
         when (uri.host) {
             "speak" -> requestSpeech(uri)
-            "stop" -> {
+            "pause", "resume", "stop" -> {
+                val action = when (uri.host) {
+                    "pause" -> KoreaderTtsService.ACTION_PAUSE
+                    "resume" -> KoreaderTtsService.ACTION_RESUME
+                    else -> KoreaderTtsService.ACTION_STOP
+                }
                 startService(
                     Intent(this, KoreaderTtsService::class.java)
-                        .setAction(KoreaderTtsService.ACTION_STOP)
+                        .setAction(action)
                 )
                 finish()
             }

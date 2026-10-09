@@ -28,6 +28,8 @@ class KoreaderTtsService : Service() {
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private var synthesis: Future<*>? = null
     private var player: MediaPlayer? = null
+    private var playerPrepared = false
+    @Volatile private var paused = false
     private var playingFile: File? = null
     private var generation = 0L
 
@@ -48,6 +50,7 @@ class KoreaderTtsService : Service() {
                     Log.w(TAG, "Ignored invalid speech request")
                     stopSelf(startId)
                 } else {
+                    paused = false
                     startForeground(NOTIFICATION_ID, playbackNotification())
                     speak(
                         text,
@@ -58,6 +61,12 @@ class KoreaderTtsService : Service() {
                 }
             }
 
+            ACTION_PAUSE -> {
+                if (pauseSpeech()) updatePlaybackNotification() else stopSelf(startId)
+            }
+            ACTION_RESUME -> {
+                if (resumeSpeech()) updatePlaybackNotification() else stopSelf(startId)
+            }
             ACTION_STOP -> stopSpeech()
             else -> stopSelf(startId)
         }
@@ -174,6 +183,7 @@ class KoreaderTtsService : Service() {
             MediaPlayer().also {
                 player = it
                 playingFile = audioFile
+                playerPrepared = false
             }
         }
         nextPlayer.setAudioAttributes(
@@ -195,7 +205,11 @@ class KoreaderTtsService : Service() {
         try {
             nextPlayer.setDataSource(audioFile.absolutePath)
             nextPlayer.prepare()
-            nextPlayer.start()
+            synchronized(this) {
+                if (player !== nextPlayer || requestGeneration != generation) return
+                playerPrepared = true
+                if (!paused) nextPlayer.start()
+            }
         } catch (error: Exception) {
             releasePlayer(nextPlayer, audioFile)
             Log.e(TAG, "Kokoro playback setup failed", error)
@@ -250,6 +264,7 @@ class KoreaderTtsService : Service() {
         synchronized(this) {
             if (player === releasedPlayer) {
                 player = null
+                playerPrepared = false
                 playingFile = null
             }
         }
@@ -261,10 +276,29 @@ class KoreaderTtsService : Service() {
     private fun isCurrent(requestGeneration: Long): Boolean =
         requestGeneration == generation && !Thread.currentThread().isInterrupted
 
+    @Synchronized
+    private fun pauseSpeech(): Boolean {
+        if (synthesis == null && player == null) return false
+        paused = true
+        if (playerPrepared && player?.isPlaying == true) player?.pause()
+        Log.i(TAG, "Paused speech")
+        return true
+    }
+
+    @Synchronized
+    private fun resumeSpeech(): Boolean {
+        if (synthesis == null && player == null) return false
+        paused = false
+        if (playerPrepared && player?.isPlaying == false) player?.start()
+        Log.i(TAG, "Resumed speech")
+        return true
+    }
+
     private fun stopSpeech() {
         synchronized(this) {
             generation++
             stopLocked()
+            paused = false
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -275,15 +309,21 @@ class KoreaderTtsService : Service() {
         synthesis?.cancel(true)
         synthesis = null
         player?.release()
+        playerPrepared = false
         player = null
         playingFile?.delete()
         playingFile = null
     }
 
+    private fun updatePlaybackNotification() {
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, playbackNotification())
+    }
+
     private fun playbackNotification(): Notification =
         Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText("Narrating with Kokoro")
+            .setContentText(if (paused) "Narration paused" else "Narrating with Kokoro")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
@@ -299,6 +339,8 @@ class KoreaderTtsService : Service() {
 
     companion object {
         const val ACTION_SPEAK = "dev.fmguerreiro.koreader.tts.SPEAK"
+        const val ACTION_PAUSE = "dev.fmguerreiro.koreader.tts.PAUSE"
+        const val ACTION_RESUME = "dev.fmguerreiro.koreader.tts.RESUME"
         const val ACTION_STOP = "dev.fmguerreiro.koreader.tts.STOP"
         const val EXTRA_TEXT = "text"
         const val EXTRA_LANGUAGE = "language"
